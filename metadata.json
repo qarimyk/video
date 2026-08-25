@@ -1,0 +1,6 @@
+{
+  "name": "Offline Video Downloader",
+  "description": "Full-stack media management platform featuring high-fidelity offline video downloading, smart library playlists, background queue manager, and an in-browser video processing studio.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
