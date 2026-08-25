@@ -97,6 +97,32 @@ class DownloadQueueManager {
     }
   }
 
+  public pauseAll() {
+    this.queue.forEach((task) => {
+      if (task.status === 'downloading' || task.status === 'queued') {
+        if (task.abortController) {
+          task.abortController.abort();
+        }
+        task.status = 'paused';
+        task.eta = 'Paused';
+        task.speedFormatted = '0 KB/s';
+      }
+    });
+    this.notify();
+  }
+
+  public resumeAll() {
+    this.queue.forEach((task) => {
+      if (task.status === 'paused' || task.status === 'error' || task.status === 'cancelled') {
+        task.status = 'queued';
+        task.error = undefined;
+        task.eta = 'Waiting in queue...';
+      }
+    });
+    this.notify();
+    this.processQueue();
+  }
+
   public resumeTask(taskId: string) {
     const task = this.queue.find((t) => t.id === taskId);
     if (task && (task.status === 'paused' || task.status === 'error' || task.status === 'cancelled')) {

@@ -35,6 +35,7 @@ interface DownloadCenterProps {
   onOpenQueueModal?: () => void;
   onOpenStudio?: (videoId: string) => void;
   onAddToPlaylist?: (video: DownloadedVideo) => void;
+  onOpenYouTubeBrowser?: () => void;
   isOnline: boolean;
 }
 
@@ -48,6 +49,7 @@ export const DownloadCenter: React.FC<DownloadCenterProps> = ({
   onOpenQueueModal,
   onOpenStudio,
   onAddToPlaylist,
+  onOpenYouTubeBrowser,
   isOnline,
 }) => {
   const [urlInput, setUrlInput] = useState('');
@@ -155,21 +157,34 @@ export const DownloadCenter: React.FC<DownloadCenterProps> = ({
           </p>
         </div>
 
-        {/* Download Queue Trigger Button */}
-        {onOpenQueueModal && (
-          <button
-            onClick={onOpenQueueModal}
-            className="px-4 py-2 rounded-full bg-white hover:bg-neutral-100 border border-neutral-200/90 text-neutral-900 text-xs font-semibold flex items-center gap-2 shadow-2xs transition-all active:scale-95"
-          >
-            <Layers className="w-3.5 h-3.5" />
-            <span>Download Queue</span>
-            {activeCount > 0 && (
-              <span className="w-5 h-5 rounded-full bg-black text-white text-[10px] font-mono flex items-center justify-center font-bold">
-                {activeCount}
-              </span>
-            )}
-          </button>
-        )}
+        <div className="flex items-center gap-2">
+          {/* YouTube Browser Button */}
+          {onOpenYouTubeBrowser && (
+            <button
+              onClick={onOpenYouTubeBrowser}
+              className="px-4 py-2 rounded-full bg-neutral-900 hover:bg-black text-white text-xs font-semibold flex items-center gap-2 shadow-xs transition-all active:scale-95"
+            >
+              <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+              <span>YouTube Browser</span>
+            </button>
+          )}
+
+          {/* Download Queue Trigger Button */}
+          {onOpenQueueModal && (
+            <button
+              onClick={onOpenQueueModal}
+              className="px-4 py-2 rounded-full bg-white hover:bg-neutral-100 border border-neutral-200/90 text-neutral-900 text-xs font-semibold flex items-center gap-2 shadow-2xs transition-all active:scale-95"
+            >
+              <Layers className="w-3.5 h-3.5" />
+              <span>Queue</span>
+              {activeCount > 0 && (
+                <span className="w-5 h-5 rounded-full bg-black text-white text-[10px] font-mono flex items-center justify-center font-bold">
+                  {activeCount}
+                </span>
+              )}
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Pill-shaped URL Input Field */}

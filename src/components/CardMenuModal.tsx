@@ -9,7 +9,9 @@ import {
   Scissors,
   ListPlus,
   Music,
-  Minimize2
+  FolderInput,
+  FolderLock,
+  RefreshCw
 } from 'lucide-react';
 import { DownloadedVideo } from '../types';
 
@@ -24,6 +26,9 @@ interface CardMenuModalProps {
   onDelete: (id: string) => void;
   onOpenStudio?: (videoId: string) => void;
   onAddToPlaylist?: (video: DownloadedVideo) => void;
+  onMoveFolder?: (video: DownloadedVideo) => void;
+  onVault?: (video: DownloadedVideo) => void;
+  onConvert?: (video: DownloadedVideo) => void;
 }
 
 export const CardMenuModal: React.FC<CardMenuModalProps> = ({
@@ -37,6 +42,9 @@ export const CardMenuModal: React.FC<CardMenuModalProps> = ({
   onDelete,
   onOpenStudio,
   onAddToPlaylist,
+  onMoveFolder,
+  onVault,
+  onConvert,
 }) => {
   if (!isOpen) return null;
 
@@ -65,6 +73,12 @@ export const CardMenuModal: React.FC<CardMenuModalProps> = ({
                 <span>{video.fileSizeFormatted}</span>
                 <span>·</span>
                 <span>{video.durationFormatted}</span>
+                {video.folder && (
+                  <>
+                    <span>·</span>
+                    <span className="font-mono text-neutral-700 font-semibold">{video.folder}</span>
+                  </>
+                )}
               </p>
             </div>
           </div>
@@ -94,6 +108,25 @@ export const CardMenuModal: React.FC<CardMenuModalProps> = ({
             </div>
           </button>
 
+          {/* Convert Media */}
+          {onConvert && (
+            <button
+              onClick={() => {
+                onClose();
+                onConvert(video);
+              }}
+              className="w-full flex items-center gap-3.5 px-4 py-3 rounded-2xl hover:bg-neutral-100 text-neutral-900 text-sm font-medium transition-colors text-left"
+            >
+              <div className="w-8 h-8 rounded-full bg-neutral-100 text-neutral-800 flex items-center justify-center border border-neutral-200">
+                <RefreshCw className="w-4 h-4" />
+              </div>
+              <div>
+                <div className="font-semibold">Convert Format / Quality</div>
+                <div className="text-xs text-neutral-500">Transcode to MP4, MKV, MOV, MP3, WAV, 4K</div>
+              </div>
+            </button>
+          )}
+
           {/* Open in Video Studio */}
           {onOpenStudio && (
             <button
@@ -113,6 +146,25 @@ export const CardMenuModal: React.FC<CardMenuModalProps> = ({
             </button>
           )}
 
+          {/* Move to Folder */}
+          {onMoveFolder && (
+            <button
+              onClick={() => {
+                onClose();
+                onMoveFolder(video);
+              }}
+              className="w-full flex items-center gap-3.5 px-4 py-3 rounded-2xl hover:bg-neutral-100 text-neutral-900 text-sm font-medium transition-colors text-left"
+            >
+              <div className="w-8 h-8 rounded-full bg-neutral-100 text-neutral-800 flex items-center justify-center border border-neutral-200">
+                <FolderInput className="w-4 h-4" />
+              </div>
+              <div>
+                <div className="font-semibold">Move to Folder</div>
+                <div className="text-xs text-neutral-500">Organize in Downloads, Converted, or custom folder</div>
+              </div>
+            </button>
+          )}
+
           {/* Add to Playlist */}
           {onAddToPlaylist && (
             <button
@@ -128,6 +180,25 @@ export const CardMenuModal: React.FC<CardMenuModalProps> = ({
               <div>
                 <div className="font-semibold">Add to Playlist</div>
                 <div className="text-xs text-neutral-500">Save to a custom or smart playlist</div>
+              </div>
+            </button>
+          )}
+
+          {/* Add to Vault */}
+          {onVault && (
+            <button
+              onClick={() => {
+                onClose();
+                onVault(video);
+              }}
+              className="w-full flex items-center gap-3.5 px-4 py-3 rounded-2xl hover:bg-neutral-100 text-neutral-900 text-sm font-medium transition-colors text-left"
+            >
+              <div className="w-8 h-8 rounded-full bg-neutral-900 text-white flex items-center justify-center">
+                <FolderLock className="w-4 h-4" />
+              </div>
+              <div>
+                <div className="font-semibold">Move to Secure Vault</div>
+                <div className="text-xs text-neutral-500">Encrypt with AES-256 and hide from library</div>
               </div>
             </button>
           )}
@@ -204,3 +275,4 @@ export const CardMenuModal: React.FC<CardMenuModalProps> = ({
     </div>
   );
 };
+

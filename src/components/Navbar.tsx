@@ -21,6 +21,7 @@ interface NavbarProps {
   onOpenHelp: () => void;
   onClearCache?: () => void;
   onNavigateToHistory: () => void;
+  onSecretLogoClick?: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -30,6 +31,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenHelp,
   onClearCache,
   onNavigateToHistory,
+  onSecretLogoClick,
 }) => {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
 
@@ -41,7 +43,10 @@ export const Navbar: React.FC<NavbarProps> = ({
           {/* Left: Dot Matrix Logo */}
           <div className="flex items-center gap-3">
             <button 
-              onClick={() => setIsMenuOpen(true)}
+              onClick={() => {
+                if (onSecretLogoClick) onSecretLogoClick();
+                else setIsMenuOpen(true);
+              }}
               className="p-1 rounded-xl hover:bg-neutral-200/50 transition-colors focus:outline-none"
               title="Nothing CMF System"
             >

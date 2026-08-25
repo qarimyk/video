@@ -6,7 +6,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Navbar } from './components/Navbar';
 import { DownloadCenter } from './components/DownloadCenter';
-import { OfflineLibrary } from './components/OfflineLibrary';
+import { DownloadsManagerView } from './components/DownloadsManagerView';
+import { UniversalLibrary } from './components/UniversalLibrary';
 import { VideoStudio } from './components/VideoStudio';
 import { SettingsView } from './components/SettingsView';
 import { BottomNav, TabType } from './components/BottomNav';
@@ -16,7 +17,12 @@ import { DownloadQueueModal } from './components/DownloadQueueModal';
 import { PlaylistModal } from './components/PlaylistModal';
 import { LocalImportModal } from './components/LocalImportModal';
 import { HelpModal } from './components/HelpModal';
-import { DownloadedVideo, Playlist, StorageStats, DownloadTask } from './types';
+import { PrivacyVaultModal } from './components/PrivacyVaultModal';
+import { MediaConverterModal } from './components/MediaConverterModal';
+import { CardMenuModal } from './components/CardMenuModal';
+import { EditMetadataModal } from './components/EditMetadataModal';
+import { YouTubeBrowserModal } from './components/YouTubeBrowserModal';
+import { DownloadedVideo, Playlist, StorageStats } from './types';
 import { 
   getAllDownloadedVideos, 
   deleteDownloadedVideo, 
@@ -25,6 +31,8 @@ import {
   getStorageStats,
   seedDefaultVideosIfEmpty,
   getAllPlaylists,
+  saveDownloadedVideo,
+  exportVideoToFile,
   getDB
 } from './services/storage';
 import { downloadQueue } from './services/downloadQueue';
@@ -44,26 +52,40 @@ export default function App() {
     videoCount: 0,
   });
   
-  // Modals
+  // Player state
   const [playingVideo, setPlayingVideo] = useState<DownloadedVideo | null>(null);
   const [isPlayerModalOpen, setIsPlayerModalOpen] = useState(false);
-  const [isQueueModalOpen, setIsQueueModalOpen] = useState(false);
-  const [isPlaylistModalOpen, setIsPlaylistModalOpen] = useState(false);
-  const [playlistTargetVideo, setPlaylistTargetVideo] = useState<DownloadedVideo | null>(null);
-  const [isImportOpen, setIsImportOpen] = useState(false);
-  const [isHelpOpen, setIsHelpOpen] = useState(false);
-
-  // Video Studio selected video target
-  const [studioTargetVideoId, setStudioTargetVideoId] = useState<string | undefined>(undefined);
-
-  // Playback Queue & Mini player state
   const [playerQueue, setPlayerQueue] = useState<DownloadedVideo[]>([]);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
 
+  // Modals & Tools
+  const [isQueueModalOpen, setIsQueueModalOpen] = useState(false);
+  const [isPlaylistModalOpen, setIsPlaylistModalOpen] = useState(false);
+  const [playlistTargetVideo, setPlaylistTargetVideo] = useState<DownloadedVideo | null>(null);
+  const [isImportOpen, setIsImportOpen] = useState(false);
+  const [isHelpOpen, setIsHelpOpen] = useState(false);
+  const [isVaultOpen, setIsVaultOpen] = useState(false);
+  const [isConverterOpen, setIsConverterOpen] = useState(false);
+  const [converterTargetVideo, setConverterTargetVideo] = useState<DownloadedVideo | null>(null);
+  const [isYouTubeBrowserOpen, setIsYouTubeBrowserOpen] = useState(false);
+
+  // Card Context Menu & Metadata edit
+  const [menuTargetVideo, setMenuTargetVideo] = useState<DownloadedVideo | null>(null);
+  const [isCardMenuOpen, setIsCardMenuOpen] = useState(false);
+  const [metadataTargetVideo, setMetadataTargetVideo] = useState<DownloadedVideo | null>(null);
+  const [isMetadataModalOpen, setIsMetadataModalOpen] = useState(false);
+
+  // Video Studio target
+  const [studioTargetVideoId, setStudioTargetVideoId] = useState<string | undefined>(undefined);
+
   // Active downloading count from queue
   const [activeDownloadsCount, setActiveDownloadsCount] = useState(0);
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
+
+  // Secret vault tap counter
+  const [logoTapCount, setLogoTapCount] = useState(0);
 
   // Monitor network connectivity
   useEffect(() => {
@@ -91,7 +113,6 @@ export default function App() {
   // Reload offline library & playlists data
   const reloadLibrary = useCallback(async () => {
     try {
-      // Seed initial sample videos if empty
       const items = await seedDefaultVideosIfEmpty();
       setVideos(items);
 
@@ -100,6 +121,7 @@ export default function App() {
 
       const stats = await getStorageStats();
       setStorageStats(stats);
+      setRefreshTrigger(prev => prev + 1);
     } catch (e) {
       console.error('Failed to load offline media:', e);
     }
@@ -150,6 +172,11 @@ export default function App() {
     setActiveTab('studio');
   };
 
+  const handleOpenConverter = (video?: DownloadedVideo) => {
+    setConverterTargetVideo(video || null);
+    setIsConverterOpen(true);
+  };
+
   const handleOpenPlaylistModal = (targetVideo?: DownloadedVideo) => {
     setPlaylistTargetVideo(targetVideo || null);
     setIsPlaylistModalOpen(true);
@@ -172,6 +199,27 @@ export default function App() {
   const handleUpdateMetadata = async (id: string, updates: Partial<DownloadedVideo>) => {
     await updateVideoMetadata(id, updates);
     reloadLibrary();
+  };
+
+  const handleOpenCardMenu = (video: DownloadedVideo) => {
+    setMenuTargetVideo(video);
+    setIsCardMenuOpen(true);
+  };
+
+  const handleMoveFolder = async (video: DownloadedVideo, folderName: string) => {
+    await saveDownloadedVideo({ ...video, folder: folderName });
+    reloadLibrary();
+  };
+
+  const handleSecretLogoClick = () => {
+    setLogoTapCount(prev => {
+      const next = prev + 1;
+      if (next >= 3) {
+        setIsVaultOpen(true);
+        return 0;
+      }
+      return next;
+    });
   };
 
   const handleClearAllData = async () => {
@@ -200,6 +248,7 @@ export default function App() {
         onOpenHelp={() => setIsHelpOpen(true)}
         onClearCache={handleClearAllData}
         onNavigateToHistory={() => setActiveTab('library')}
+        onSecretLogoClick={handleSecretLogoClick}
       />
 
       {/* Offline Banner when network is lost */}
@@ -214,7 +263,8 @@ export default function App() {
 
       {/* Main Views */}
       <main className="flex-1 w-full">
-        {/* TAB 1: Downloader */}
+        
+        {/* TAB 1: Downloader (Paste URL, direct download, presets) */}
         {activeTab === 'downloader' && (
           <DownloadCenter
             recentVideos={videos}
@@ -226,11 +276,36 @@ export default function App() {
             onOpenQueueModal={() => setIsQueueModalOpen(true)}
             onOpenStudio={handleOpenStudio}
             onAddToPlaylist={handleOpenPlaylistModal}
+            onOpenYouTubeBrowser={() => setIsYouTubeBrowserOpen(true)}
             isOnline={isOnline}
           />
         )}
 
-        {/* TAB 2: Video Studio */}
+        {/* TAB 2: Downloads (Active and completed download queue) */}
+        {activeTab === 'downloads' && (
+          <DownloadsManagerView
+            onPlayVideo={handlePlayVideo}
+            onOpenStudio={handleOpenStudio}
+            onNavigateToDownloader={() => setActiveTab('downloader')}
+            onNavigateToLibrary={() => setActiveTab('library')}
+          />
+        )}
+
+        {/* TAB 3: Universal Media Library (Categories, Folders, Playlists, Starred, Batch actions) */}
+        {activeTab === 'library' && (
+          <div className="px-4 py-6">
+            <UniversalLibrary
+              onPlayVideo={handlePlayVideo}
+              onOpenCardMenu={handleOpenCardMenu}
+              onOpenStudio={handleOpenStudio}
+              onOpenConverter={handleOpenConverter}
+              onOpenVault={() => setIsVaultOpen(true)}
+              onRefreshTrigger={refreshTrigger}
+            />
+          </div>
+        )}
+
+        {/* TAB 4: Video Studio (Video editor, trimmer, compressor, subtitle merger) */}
         {activeTab === 'studio' && (
           <VideoStudio
             videos={videos}
@@ -240,24 +315,7 @@ export default function App() {
           />
         )}
 
-        {/* TAB 3: Smart Library */}
-        {activeTab === 'library' && (
-          <OfflineLibrary
-            videos={videos}
-            playlists={playlists}
-            onPlayVideo={handlePlayVideo}
-            onDeleteVideo={handleDeleteVideo}
-            onToggleFavorite={handleToggleFavorite}
-            onUpdateMetadata={handleUpdateMetadata}
-            onNavigateToDownloader={() => setActiveTab('downloader')}
-            onOpenImport={() => setIsImportOpen(true)}
-            onOpenStudio={handleOpenStudio}
-            onOpenPlaylistModal={handleOpenPlaylistModal}
-            onPlayPlaylist={handlePlayPlaylist}
-          />
-        )}
-
-        {/* TAB 4: Settings */}
+        {/* TAB 5: Settings */}
         {activeTab === 'settings' && (
           <SettingsView
             storageStats={storageStats}
@@ -269,7 +327,7 @@ export default function App() {
         )}
       </main>
 
-      {/* Floating Mini Player Bar (shown when media is loaded and full player is dismissed) */}
+      {/* Floating Mini Player Bar */}
       {playingVideo && !isPlayerModalOpen && (
         <MiniPlayerBar
           currentVideo={playingVideo}
@@ -295,7 +353,7 @@ export default function App() {
         videoCount={videos.length}
       />
 
-      {/* Full Media Player Modal */}
+      {/* Full Media Player Modal with Sleep Timer */}
       {playingVideo && isPlayerModalOpen && (
         <VideoPlayerModal
           video={playingVideo}
@@ -306,6 +364,73 @@ export default function App() {
           onAddToPlaylist={handleOpenPlaylistModal}
           onPlayNext={handleNextInQueue}
           onPlayPrev={handlePrevInQueue}
+        />
+      )}
+
+      {/* Hardware Transcoder / Converter Modal */}
+      {isConverterOpen && (
+        <MediaConverterModal
+          isOpen={isConverterOpen}
+          onClose={() => {
+            setIsConverterOpen(false);
+            setConverterTargetVideo(null);
+          }}
+          selectedVideo={converterTargetVideo}
+          allVideos={videos}
+          onConversionFinished={reloadLibrary}
+        />
+      )}
+
+      {/* Zero-Knowledge Privacy Vault Modal */}
+      {isVaultOpen && (
+        <PrivacyVaultModal
+          isOpen={isVaultOpen}
+          onClose={() => setIsVaultOpen(false)}
+          onVaultUpdated={reloadLibrary}
+        />
+      )}
+
+      {/* Card Context Menu Modal */}
+      {menuTargetVideo && (
+        <CardMenuModal
+          video={menuTargetVideo}
+          isOpen={isCardMenuOpen}
+          onClose={() => {
+            setIsCardMenuOpen(false);
+            setMenuTargetVideo(null);
+          }}
+          onPlay={(v) => handlePlayVideo(v)}
+          onOpenStudio={(id) => handleOpenStudio(id)}
+          onAddToPlaylist={(v) => handleOpenPlaylistModal(v)}
+          onEditMetadata={(v) => {
+            setMetadataTargetVideo(v);
+            setIsMetadataModalOpen(true);
+          }}
+          onExport={(v) => exportVideoToFile(v)}
+          onDelete={(id) => handleDeleteVideo(id)}
+          onToggleFavorite={(id) => handleToggleFavorite(id)}
+          onConvert={(v) => handleOpenConverter(v)}
+          onMoveFolder={(v, folder) => handleMoveFolder(v, folder)}
+          onMoveToVault={() => {
+            setIsVaultOpen(true);
+          }}
+        />
+      )}
+
+      {/* Edit Metadata Modal */}
+      {metadataTargetVideo && (
+        <EditMetadataModal
+          video={metadataTargetVideo}
+          isOpen={isMetadataModalOpen}
+          onClose={() => {
+            setIsMetadataModalOpen(false);
+            setMetadataTargetVideo(null);
+          }}
+          onSave={async (id, updates) => {
+            await handleUpdateMetadata(id, updates);
+            setIsMetadataModalOpen(false);
+            setMetadataTargetVideo(null);
+          }}
         />
       )}
 
@@ -348,6 +473,17 @@ export default function App() {
       {/* Help & Shortcuts Modal */}
       {isHelpOpen && (
         <HelpModal onClose={() => setIsHelpOpen(false)} />
+      )}
+
+      {/* YouTube Browser / Downloader Modal */}
+      {isYouTubeBrowserOpen && (
+        <YouTubeBrowserModal
+          isOpen={isYouTubeBrowserOpen}
+          onClose={() => setIsYouTubeBrowserOpen(false)}
+          onDownloadQueued={() => {
+            reloadLibrary();
+          }}
+        />
       )}
 
     </div>

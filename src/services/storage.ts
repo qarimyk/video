@@ -4,7 +4,8 @@ import {
   StorageStats, 
   Playlist, 
   AppSettings, 
-  SubtitleTrack 
+  SubtitleTrack,
+  MediaFolder
 } from '../types';
 
 interface VideoDB extends DBSchema {
@@ -15,7 +16,16 @@ interface VideoDB extends DBSchema {
       'by-date': number;
       'by-favorite': number;
       'by-type': string;
+      'by-folder': string;
+      'by-category': string;
       'by-plays': number;
+    };
+  };
+  folders: {
+    key: string;
+    value: MediaFolder;
+    indexes: {
+      'by-name': string;
     };
   };
   playlists: {
@@ -30,10 +40,18 @@ interface VideoDB extends DBSchema {
     key: string;
     value: any;
   };
+  vault_items: {
+    key: string;
+    value: any;
+  };
+  vault_config: {
+    key: string;
+    value: any;
+  };
 }
 
 const DB_NAME = 'offline_media_downloader_db';
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 
 let dbPromise: Promise<IDBPDatabase<VideoDB>> | null = null;
 
@@ -46,7 +64,14 @@ export function getDB(): Promise<IDBPDatabase<VideoDB>> {
           store.createIndex('by-date', 'downloadedAt');
           store.createIndex('by-favorite', 'isFavorite');
           store.createIndex('by-type', 'type');
+          store.createIndex('by-folder', 'folder');
+          store.createIndex('by-category', 'category');
           store.createIndex('by-plays', 'playCount');
+        }
+
+        if (!db.objectStoreNames.contains('folders')) {
+          const folderStore = db.createObjectStore('folders', { keyPath: 'id' });
+          folderStore.createIndex('by-name', 'name');
         }
 
         if (!db.objectStoreNames.contains('playlists')) {
@@ -57,6 +82,14 @@ export function getDB(): Promise<IDBPDatabase<VideoDB>> {
 
         if (!db.objectStoreNames.contains('settings')) {
           db.createObjectStore('settings');
+        }
+
+        if (!db.objectStoreNames.contains('vault_items')) {
+          db.createObjectStore('vault_items', { keyPath: 'id' });
+        }
+
+        if (!db.objectStoreNames.contains('vault_config')) {
+          db.createObjectStore('vault_config');
         }
       },
     });
@@ -88,8 +121,22 @@ export function formatDuration(seconds: number): string {
 
 export async function saveDownloadedVideo(video: DownloadedVideo): Promise<void> {
   const db = await getDB();
+  
+  // Normalize folder and category
+  let folder = video.folder || (video.isConverted ? 'Converted' : video.isImported ? 'Imported' : 'Downloads');
+  let category = video.category;
+  if (!category) {
+    if (video.type === 'audio' || video.format === 'mp3' || video.format === 'wav' || video.format === 'aac') {
+      category = video.isMusic || video.tags?.some(t => t.toLowerCase().includes('music') || t.toLowerCase().includes('soundtrack') || t.toLowerCase().includes('beats')) ? 'music' : 'audio';
+    } else {
+      category = video.isConverted ? 'converted' : 'video';
+    }
+  }
+
   const enhancedVideo: DownloadedVideo = {
     ...video,
+    folder,
+    category,
     playCount: video.playCount || 0,
     lastPlayedAt: video.lastPlayedAt || undefined,
     lastPosition: video.lastPosition || 0,
@@ -101,7 +148,8 @@ export async function getAllDownloadedVideos(): Promise<DownloadedVideo[]> {
   try {
     const db = await getDB();
     const videos = await db.getAllFromIndex('videos', 'by-date');
-    return videos.reverse(); // newest first
+    // Filter out vaulted items for absolute privacy & zero knowledge
+    return videos.filter(v => !v.isVaulted).reverse();
   } catch (err) {
     console.error('Failed to retrieve offline videos:', err);
     return [];
@@ -110,7 +158,9 @@ export async function getAllDownloadedVideos(): Promise<DownloadedVideo[]> {
 
 export async function getDownloadedVideo(id: string): Promise<DownloadedVideo | undefined> {
   const db = await getDB();
-  return db.get('videos', id);
+  const video = await db.get('videos', id);
+  if (video && video.isVaulted) return undefined; // Hide from public access
+  return video;
 }
 
 export async function deleteDownloadedVideo(id: string): Promise<void> {
@@ -137,6 +187,83 @@ export async function toggleFavoriteVideo(id: string): Promise<boolean> {
     return video.isFavorite;
   }
   return false;
+}
+
+export async function moveVideoToFolder(id: string, folderName: string): Promise<void> {
+  const db = await getDB();
+  const video = await db.get('videos', id);
+  if (video) {
+    video.folder = folderName;
+    await db.put('videos', video);
+  }
+}
+
+// ----------------- FOLDERS -----------------
+
+const DEFAULT_FOLDERS: MediaFolder[] = [
+  { id: 'folder-downloads', name: 'Downloads', isDefault: true, createdAt: 1700000000000, icon: 'ArrowDown' },
+  { id: 'folder-converted', name: 'Converted', isDefault: true, createdAt: 1700000001000, icon: 'RefreshCw' },
+  { id: 'folder-imported', name: 'Imported', isDefault: true, createdAt: 1700000002000, icon: 'Upload' },
+];
+
+export async function getAllFolders(): Promise<MediaFolder[]> {
+  try {
+    const db = await getDB();
+    const stored = await db.getAll('folders');
+    const all = [...DEFAULT_FOLDERS];
+    
+    // Add custom folders if not already present
+    for (const f of stored) {
+      if (!all.some(item => item.name.toLowerCase() === f.name.toLowerCase())) {
+        all.push(f);
+      }
+    }
+
+    // Compute live stats per folder
+    const videos = await getAllDownloadedVideos();
+    return all.map(f => {
+      const folderVideos = videos.filter(v => (v.folder || 'Downloads').toLowerCase() === f.name.toLowerCase());
+      const totalSizeBytes = folderVideos.reduce((acc, v) => acc + (v.fileSize || 0), 0);
+      return {
+        ...f,
+        itemCount: folderVideos.length,
+        totalSizeBytes,
+        formattedSize: formatBytes(totalSizeBytes),
+      };
+    });
+  } catch (e) {
+    return DEFAULT_FOLDERS;
+  }
+}
+
+export async function createFolder(name: string): Promise<MediaFolder> {
+  const cleanName = name.trim();
+  const db = await getDB();
+  const newFolder: MediaFolder = {
+    id: `folder-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    name: cleanName,
+    isDefault: false,
+    createdAt: Date.now(),
+    itemCount: 0,
+    totalSizeBytes: 0,
+    formattedSize: '0 B',
+  };
+  await db.put('folders', newFolder);
+  return newFolder;
+}
+
+export async function deleteFolder(id: string, folderName: string): Promise<void> {
+  const db = await getDB();
+  await db.delete('folders', id);
+
+  // Move items in that folder back to 'Downloads'
+  const videos = await getAllDownloadedVideos();
+  for (const v of videos) {
+    if (v.folder?.toLowerCase() === folderName.toLowerCase()) {
+      v.folder = 'Downloads';
+      await db.put('videos', v);
+    }
+  }
 }
 
 export async function updateVideoMetadata(
@@ -268,6 +395,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   autoResumeDownloads: true,
   cloudWorkerBackup: true,
   hardwareAcceleration: true,
+  defaultFolder: 'Downloads',
+  autoOrganizeMusic: true,
 };
 
 export async function getAppSettings(): Promise<AppSettings> {
@@ -295,10 +424,18 @@ export async function getStorageStats(): Promise<StorageStats> {
     let totalSecs = 0;
     let videoCount = 0;
     let audioCount = 0;
+    let musicCount = 0;
+    let convertedCount = 0;
 
     for (const v of videos) {
       totalVideoBytes += v.fileSize || v.videoBlob?.size || 0;
       totalSecs += v.duration || 0;
+      if (v.category === 'music' || v.isMusic) {
+        musicCount++;
+      }
+      if (v.category === 'converted' || v.isConverted || v.folder?.toLowerCase() === 'converted') {
+        convertedCount++;
+      }
       if (v.type === 'audio') {
         audioCount++;
       } else {
@@ -320,6 +457,8 @@ export async function getStorageStats(): Promise<StorageStats> {
         formattedQuota: formatBytes(quota),
         videoCount,
         audioCount,
+        musicCount,
+        convertedCount,
         totalDurationFormatted: formatDuration(totalSecs),
       };
     }
@@ -332,6 +471,8 @@ export async function getStorageStats(): Promise<StorageStats> {
       formattedQuota: '10 GB (est.)',
       videoCount,
       audioCount,
+      musicCount,
+      convertedCount,
       totalDurationFormatted: formatDuration(totalSecs),
     };
   } catch (e) {
@@ -343,6 +484,8 @@ export async function getStorageStats(): Promise<StorageStats> {
       formattedQuota: 'Unknown',
       videoCount: 0,
       audioCount: 0,
+      musicCount: 0,
+      convertedCount: 0,
       totalDurationFormatted: '0:00',
     };
   }
@@ -374,6 +517,8 @@ export async function seedDefaultVideosIfEmpty(): Promise<DownloadedVideo[]> {
         playCount: 14,
         tags: ['Design', 'Minimalism', 'Industrial'],
         type: 'video',
+        category: 'video',
+        folder: 'Downloads',
       },
       {
         id: 'seed-interview-designers',
@@ -394,32 +539,39 @@ export async function seedDefaultVideosIfEmpty(): Promise<DownloadedVideo[]> {
         playCount: 8,
         tags: ['Interview', 'CMF', 'Nothing'],
         type: 'video',
+        category: 'video',
+        folder: 'Downloads',
       },
       {
         id: 'seed-future-technology',
-        title: 'Future of Technology',
+        title: 'Future of Technology (4K Re-master)',
         sourceUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerJoyBlazes.mp4',
         author: 'Hardware Future Collective',
         duration: 307,
         durationFormatted: '05:07',
         thumbnailUrl: 'https://images.unsplash.com/photo-1518770660439-4636190af475?w=800&auto=format&fit=crop&q=80',
-        format: 'mp4',
-        quality: '1080p',
-        resolution: '1920x1080',
+        format: 'mkv',
+        quality: '4K Ultra HD',
+        resolution: '3840x2160',
         fps: 60,
-        fileSize: 61.3 * 1024 * 1024,
-        fileSizeFormatted: '61.3 MB',
+        fileSize: 114.3 * 1024 * 1024,
+        fileSizeFormatted: '114.3 MB',
         downloadedAt: Date.now() - 3600 * 1000 * 24,
         isFavorite: false,
+        isConverted: true,
         playCount: 5,
-        tags: ['Technology', 'Hardware', 'Futurism'],
+        tags: ['Technology', 'Hardware', 'Converted', '4K'],
         type: 'video',
+        category: 'converted',
+        folder: 'Converted',
       },
       {
         id: 'seed-ambient-audio',
         title: 'Industrial Ambient Beats (CMF OST)',
         sourceUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4',
         author: 'Minimal Audio Lab',
+        artist: 'Nothing Sound System',
+        album: 'CMF Soundscapes Vol. 1',
         duration: 195,
         durationFormatted: '03:15',
         thumbnailUrl: 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=800&auto=format&fit=crop&q=80',
@@ -429,9 +581,12 @@ export async function seedDefaultVideosIfEmpty(): Promise<DownloadedVideo[]> {
         fileSizeFormatted: '4.8 MB',
         downloadedAt: Date.now() - 3600 * 1000 * 12,
         isFavorite: true,
+        isMusic: true,
         playCount: 22,
-        tags: ['Audio', 'Ambient', 'Soundtrack'],
+        tags: ['Audio', 'Ambient', 'Soundtrack', 'Music'],
         type: 'audio',
+        category: 'music',
+        folder: 'Downloads',
       }
     ];
 
@@ -493,3 +648,23 @@ export function exportVideoToFile(video: DownloadedVideo): void {
 
   setTimeout(() => URL.revokeObjectURL(url), 60000);
 }
+
+export async function batchDeleteVideos(videoIds: string[]): Promise<void> {
+  const db = await getDB();
+  const tx = db.transaction('videos', 'readwrite');
+  for (const id of videoIds) {
+    await tx.store.delete(id);
+  }
+  await tx.done;
+}
+
+export async function batchExportVideos(videoIds: string[]): Promise<void> {
+  const videos = await getAllDownloadedVideos();
+  const targets = videos.filter((v) => videoIds.includes(v.id));
+  for (let i = 0; i < targets.length; i++) {
+    setTimeout(() => {
+      exportVideoToFile(targets[i]);
+    }, i * 300);
+  }
+}
+

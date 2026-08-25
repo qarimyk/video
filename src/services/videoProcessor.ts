@@ -626,3 +626,36 @@ export async function processMergeVideos(
   sendNotification('Merge Complete', { body: `Merged ${sources.length} videos into one.` });
   return mergedVideo;
 }
+
+/**
+ * 8. CONVERT VIDEO / AUDIO FORMAT, RESOLUTION, BITRATE & FPS
+ */
+export async function processConvertMedia(
+  source: DownloadedVideo,
+  config: import('../types').ConversionConfig,
+  onProgress?: (p: ProcessProgress) => void
+): Promise<DownloadedVideo> {
+  const { conversionQueue } = await import('./conversionQueue');
+  return new Promise((resolve, reject) => {
+    onProgress?.({ progress: 10, message: 'Initiating conversion...' });
+    const taskIds = conversionQueue.addTasks([source], config);
+    const taskId = taskIds[0];
+
+    const unsubscribe = conversionQueue.subscribe((tasks) => {
+      const task = tasks.find((t) => t.id === taskId);
+      if (task) {
+        onProgress?.({ progress: task.progress, message: task.currentMessage || 'Converting...' });
+        if (task.status === 'completed' && task.resultVideo) {
+          unsubscribe();
+          resolve(task.resultVideo);
+        } else if (task.status === 'error') {
+          unsubscribe();
+          reject(new Error(task.error || 'Conversion failed'));
+        } else if (task.status === 'cancelled') {
+          unsubscribe();
+          reject(new Error('Conversion was cancelled'));
+        }
+      }
+    });
+  });
+}

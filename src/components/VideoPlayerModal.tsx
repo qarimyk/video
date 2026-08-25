@@ -21,10 +21,14 @@ import {
   Disc,
   FastForward,
   SkipBack,
-  SkipForward
+  SkipForward,
+  Moon,
+  Clock,
+  Check
 } from 'lucide-react';
-import { DownloadedVideo, PlaybackRepeatMode } from '../types';
+import { DownloadedVideo, PlaybackRepeatMode, SleepTimerDuration, SleepTimerState } from '../types';
 import { formatBytes, formatDuration, recordVideoPlayback, toggleFavoriteVideo, exportVideoToFile } from '../services/storage';
+import { sleepTimer } from '../services/sleepTimer';
 
 interface VideoPlayerModalProps {
   video: DownloadedVideo;
@@ -73,6 +77,37 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
 
   // Blob URL
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
+
+  // Sleep Timer state
+  const [showSleepMenu, setShowSleepMenu] = useState(false);
+  const [sleepState, setSleepState] = useState<SleepTimerState>(sleepTimer.getState());
+  const [customMinutes, setCustomMinutes] = useState(25);
+  const [fadeOutVolume, setFadeOutVolume] = useState(true);
+
+  // Subscribe to Sleep Timer
+  useEffect(() => {
+    const unsub = sleepTimer.subscribe((state) => {
+      setSleepState(state);
+    });
+
+    sleepTimer.registerCallbacks(
+      () => {
+        if (videoRef.current) {
+          videoRef.current.pause();
+          setIsPlaying(false);
+        }
+      },
+      (volumeRatio) => {
+        if (videoRef.current) {
+          videoRef.current.volume = Math.max(0, Math.min(1, volumeRatio));
+        }
+      }
+    );
+
+    return () => {
+      unsub();
+    };
+  }, []);
 
   useEffect(() => {
     if (video.videoBlob) {
@@ -134,6 +169,9 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
   };
 
   const handleEnded = () => {
+    // Notify sleep timer
+    sleepTimer.onMediaEnded(queue.length === 0 || !onPlayNext);
+
     if (repeatMode === 'one') {
       if (videoRef.current) {
         videoRef.current.currentTime = 0;
@@ -427,14 +465,157 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
               )}
             </div>
 
-            {/* Right Tools: Volume, Subtitles, Queue, Fullscreen */}
+            {/* Right Tools: Volume, Sleep Timer, Subtitles, Queue, Fullscreen */}
             <div className="flex items-center gap-1.5 sm:gap-2">
               <button
                 onClick={toggleMute}
                 className="p-2 rounded-full hover:bg-neutral-900 text-neutral-300 transition-colors"
+                title={isMuted ? 'Unmute' : 'Mute'}
               >
                 {isMuted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
               </button>
+
+              {/* Sleep Timer button */}
+              <div className="relative">
+                <button
+                  onClick={() => setShowSleepMenu(!showSleepMenu)}
+                  className={`p-2 rounded-full transition-colors flex items-center gap-1 ${
+                    sleepState.isActive 
+                      ? 'bg-white text-black font-semibold ring-2 ring-white/30' 
+                      : 'bg-neutral-900 text-neutral-400 hover:text-white'
+                  }`}
+                  title="Sleep Timer"
+                >
+                  <Moon className="w-3.5 h-3.5" />
+                  {sleepState.isActive && (
+                    <span className="text-[10px] font-mono px-1">
+                      {sleepTimer.formatRemainingTime()}
+                    </span>
+                  )}
+                </button>
+
+                {/* Sleep Timer Popover */}
+                {showSleepMenu && (
+                  <div className="absolute bottom-12 right-0 w-72 bg-neutral-900 border border-neutral-800 rounded-3xl p-4 shadow-2xl z-50 text-white animate-in zoom-in-95">
+                    <div className="flex items-center justify-between pb-3 border-b border-neutral-800 mb-3">
+                      <div className="flex items-center gap-2">
+                        <Moon className="w-4 h-4 text-neutral-300" />
+                        <span className="text-xs font-bold font-mono uppercase tracking-wide">Sleep Timer</span>
+                      </div>
+                      <button 
+                        onClick={() => setShowSleepMenu(false)}
+                        className="text-xs text-neutral-400 hover:text-white"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+
+                    {sleepState.isActive ? (
+                      <div className="space-y-3">
+                        <div className="p-3 rounded-2xl bg-neutral-950 border border-neutral-800 text-center">
+                          <span className="text-[10px] uppercase font-mono text-neutral-400 block mb-1">Time Remaining</span>
+                          <span className="text-2xl font-mono font-bold tracking-tight text-white">
+                            {sleepTimer.formatRemainingTime()}
+                          </span>
+                          <p className="text-[11px] text-neutral-400 mt-1">
+                            Mode: {sleepState.durationMode === 'end-of-media' ? 'End of Video' : sleepState.durationMode === 'end-of-playlist' ? 'End of Playlist' : 'Timer'}
+                          </p>
+                        </div>
+
+                        <button
+                          onClick={() => {
+                            sleepTimer.cancelTimer();
+                            setShowSleepMenu(false);
+                          }}
+                          className="w-full py-2 rounded-xl bg-red-950/80 text-red-400 hover:bg-red-900 border border-red-800/60 text-xs font-semibold transition-colors"
+                        >
+                          Turn Off Sleep Timer
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="space-y-2.5">
+                        <div className="grid grid-cols-2 gap-1.5 text-xs font-mono">
+                          {(['15m', '30m', '45m', '60m'] as SleepTimerDuration[]).map((dur) => (
+                            <button
+                              key={dur}
+                              onClick={() => {
+                                sleepTimer.startTimer(dur, 30, fadeOutVolume);
+                                setShowSleepMenu(false);
+                              }}
+                              className="py-2 px-3 rounded-xl bg-neutral-950 hover:bg-white hover:text-black border border-neutral-800 transition-all text-center font-medium"
+                            >
+                              {dur === '60m' ? '1 Hour' : dur}
+                            </button>
+                          ))}
+                        </div>
+
+                        <div className="space-y-1 pt-1 border-t border-neutral-800">
+                          <button
+                            onClick={() => {
+                              sleepTimer.startTimer('end-of-media', 0, fadeOutVolume);
+                              setShowSleepMenu(false);
+                            }}
+                            className="w-full py-2 px-3 rounded-xl bg-neutral-950 hover:bg-white hover:text-black border border-neutral-800 text-xs font-medium text-left transition-colors flex items-center justify-between"
+                          >
+                            <span>End of this video/track</span>
+                            <Clock className="w-3.5 h-3.5 opacity-60" />
+                          </button>
+
+                          {queue.length > 0 && (
+                            <button
+                              onClick={() => {
+                                sleepTimer.startTimer('end-of-playlist', 0, fadeOutVolume);
+                                setShowSleepMenu(false);
+                              }}
+                              className="w-full py-2 px-3 rounded-xl bg-neutral-950 hover:bg-white hover:text-black border border-neutral-800 text-xs font-medium text-left transition-colors flex items-center justify-between"
+                            >
+                              <span>End of queue/playlist</span>
+                              <ListMusic className="w-3.5 h-3.5 opacity-60" />
+                            </button>
+                          )}
+                        </div>
+
+                        {/* Custom slider */}
+                        <div className="pt-2 border-t border-neutral-800">
+                          <div className="flex items-center justify-between text-[11px] font-mono text-neutral-400 mb-1">
+                            <span>Custom: {customMinutes} min</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="range"
+                              min={1}
+                              max={180}
+                              value={customMinutes}
+                              onChange={(e) => setCustomMinutes(parseInt(e.target.value))}
+                              className="flex-1 accent-white h-1.5 bg-neutral-800 rounded-lg cursor-pointer"
+                            />
+                            <button
+                              onClick={() => {
+                                sleepTimer.startTimer('custom', customMinutes, fadeOutVolume);
+                                setShowSleepMenu(false);
+                              }}
+                              className="px-3 py-1 bg-white text-black text-xs font-semibold rounded-lg hover:bg-neutral-200"
+                            >
+                              Set
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Fade-out checkbox */}
+                        <label className="flex items-center gap-2 pt-2 border-t border-neutral-800 text-[11px] text-neutral-300 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={fadeOutVolume}
+                            onChange={(e) => setFadeOutVolume(e.target.checked)}
+                            className="rounded accent-white"
+                          />
+                          <span>Smooth volume fade-out before stop</span>
+                        </label>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
 
               {/* Subtitles toggle */}
               <button
